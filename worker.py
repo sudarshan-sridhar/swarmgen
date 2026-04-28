@@ -32,6 +32,7 @@ No silent failures. Every exception logs full traceback. Verbose startup banner.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 import json
 import logging
@@ -425,9 +426,13 @@ def make_app(role: str, port: int, fallback_roles: Optional[List[str]] = None) -
 
         t0 = time.perf_counter()
         try:
+            # Run torch inference in a thread so the event loop stays free for
+            # /heartbeat and /health. PyTorch CPU work would otherwise pin the
+            # loop and trip the coordinator's heartbeat-miss detector falsely
+            # — particularly painful on the Pi where VAE decode is ~140s.
             if stage == "clip":
                 prompt = params.get("prompt")
-                out_t = run_clip(bundle, prompt=prompt)
+                out_t = await asyncio.to_thread(run_clip, bundle, prompt)
                 payload = protocol.pack_tensor(out_t)
                 content_type = "application/octet-stream"
 
@@ -435,9 +440,8 @@ def make_app(role: str, port: int, fallback_roles: Optional[List[str]] = None) -
                 if not body:
                     raise HTTPException(status_code=400, detail="unet stage requires packed encoder_hidden_states in body")
                 enc = protocol.unpack_tensor(body)
-                out_t = run_unet(
-                    bundle,
-                    enc,
+                out_t = await asyncio.to_thread(
+                    run_unet, bundle, enc,
                     steps=int(params.get("steps", 4)),
                     seed=int(params.get("seed", 42)),
                     height=int(params.get("height", 512)),
@@ -450,7 +454,7 @@ def make_app(role: str, port: int, fallback_roles: Optional[List[str]] = None) -
                 if not body:
                     raise HTTPException(status_code=400, detail="vae stage requires packed latents in body")
                 latents = protocol.unpack_tensor(body)
-                payload = run_vae(bundle, latents)
+                payload = await asyncio.to_thread(run_vae, bundle, latents)
                 content_type = "image/png"
 
             else:
