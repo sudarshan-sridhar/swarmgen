@@ -125,7 +125,7 @@ def kill_vae_sync() -> str:
 
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="SwarmGen — distributed SD-Turbo demo", theme=gr.themes.Soft()) as ui:
+    with gr.Blocks(title="SwarmGen: distributed SD-Turbo demo", theme=gr.themes.Soft()) as ui:
         gr.Markdown(
             """
             # SwarmGen

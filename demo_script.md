@@ -68,4 +68,4 @@ Show the memory plot.
 
 - If a worker is unresponsive at recording time, restart in this order: pc CLIP, then pi VAE, then loq UNet.
 - If mDNS is flaky, the UI was launched with `--workers` so it does not depend on discovery for the run.
-- The "kill VAE" button sends `/admin/die` regardless of the fault-injection dropdown — useful for ad-hoc demos.
+- The "kill VAE" button sends `/admin/die` regardless of the fault-injection dropdown. Useful for ad-hoc demos.
