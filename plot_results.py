@@ -114,9 +114,11 @@ def plot_memory() -> None:
         if not math.isnan(peak):
             per_role[role] = max(per_role.get(role, 0.0), peak)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    labels = ["1-dev baseline\n(loq alone)", "3-dev swarm — loq UNet",
-              "3-dev swarm — pc CLIP", "3-dev swarm — pi VAE"]
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    labels = ["1-dev baseline\n(loq full pipeline)",
+              "3-dev swarm\nloq (UNet + VAE fp16)",
+              "3-dev swarm\npc (CLIP)",
+              "3-dev swarm\npi (VAE)"]
     values = [
         baseline_peak,
         per_role.get("unet", 0.0),
@@ -133,8 +135,9 @@ def plot_memory() -> None:
                 ha="center", va="bottom", fontsize=9)
     ax.axhline(pi_total, color="red", linestyle="--", alpha=0.6,
                label=f"Pi 4B physical RAM ({pi_total} MB)")
-    ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8.5)
     ax.set_ylabel("peak RSS during one generation (MB)")
+    ax.set_ylim(0, max(values) * 1.18)
     ax.set_title("Per-device peak memory: single-device vs heterogeneous swarm")
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(loc="upper right", fontsize=9)
