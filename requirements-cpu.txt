@@ -1,0 +1,19 @@
+# CPU-only devices: second laptop (CLIP) and Raspberry Pi 4B (VAE).
+# Pi is RAM-bound — keep this list MINIMAL. No accelerate, no xformers.
+# CLIP role on the second laptop also needs `transformers` for the tokenizer + text encoder.
+# The Pi only loads the VAE decoder, so transformers is optional there but harmless.
+#
+# Install torch separately per device:
+#   Second laptop (x86_64 CPU):   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+#   Pi 4B (aarch64):              pip install torch==2.4.1   (use the official aarch64 wheel)
+diffusers==0.30.3
+transformers==4.44.2
+safetensors>=0.4.3
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+zeroconf>=0.132.0
+psutil>=5.9.8
+pillow>=10.0.0
+numpy<2
+python-multipart>=0.0.9
