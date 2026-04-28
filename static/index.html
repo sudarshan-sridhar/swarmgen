@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SwarmGen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
+          mono: ["Geist Mono", "ui-monospace", "Menlo", "monospace"],
+        },
+        colors: {
+          ink: "#18181b",
+          steel: "#52525b",
+          whisper: "#71717a",
+          hairline: "#e4e4e7",
+          canvas: "#fafafa",
+        },
+        boxShadow: {
+          subtle: "0 1px 0 rgba(24,24,27,0.04), 0 1px 2px rgba(24,24,27,0.04)",
+        },
+      }
+    }
+  }
+</script>
+<style>
+  html, body { background: #fafafa; color: #18181b; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; }
+  .mono, .mono * { font-family: "Geist Mono", ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+  .eyebrow {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #71717a;
+    font-weight: 500;
+  }
+
+  /* hairline cards */
+  .card {
+    background: #ffffff;
+    border: 1px solid #e4e4e7;
+    border-radius: 14px;
+  }
+
+  /* tactile press */
+  .press:active { transform: translateY(1px); }
+
+  /* alive pill with pulsing dot */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: "Geist Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 3px 9px; border-radius: 9999px;
+  }
+  .pill-alive { background: rgba(16,185,129,0.10); color: #047857; }
+  .pill-alive::before {
+    content: ""; width: 6px; height: 6px; border-radius: 9999px;
+    background: #10b981;
+    box-shadow: 0 0 0 0 rgba(16,185,129,0.55);
+    animation: sg-pulse 2.4s ease-out infinite;
+  }
+  .pill-dead { background: rgba(185,28,28,0.08); color: #b91c1c; }
+  .pill-dead::before {
+    content: ""; width: 6px; height: 6px; border-radius: 9999px; background: #b91c1c;
+  }
+  @keyframes sg-pulse {
+    0%   { box-shadow: 0 0 0 0   rgba(16,185,129,0.55); }
+    70%  { box-shadow: 0 0 0 7px rgba(16,185,129,0);    }
+    100% { box-shadow: 0 0 0 0   rgba(16,185,129,0);    }
+  }
+
+  /* kbd-ish chips for hosts and inline metrics */
+  .chip {
+    display: inline-block;
+    background: #f4f4f5;
+    color: #18181b;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+  }
+
+  /* the image frame: 1px hairline, generous radius, no shadow */
+  .image-frame {
+    background: #ffffff;
+    border: 1px solid #e4e4e7;
+    border-radius: 16px;
+    aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  .image-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .image-frame .empty-state {
+    color: #a1a1aa;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+  }
+
+  /* shimmer overlay during generate */
+  .shimmer {
+    position: absolute; inset: 0;
+    background: linear-gradient(110deg, rgba(255,255,255,0) 30%, rgba(24,24,27,0.05) 50%, rgba(255,255,255,0) 70%);
+    background-size: 200% 100%;
+    animation: sg-shimmer 1.6s linear infinite;
+  }
+  @keyframes sg-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+  /* typed table styling baseline */
+  table.tbl { width: 100%; border-collapse: collapse; }
+  table.tbl th {
+    text-align: left; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: 10px; color: #71717a;
+    padding: 10px 14px; background: #fafafa;
+    border-bottom: 1px solid #e4e4e7;
+  }
+  table.tbl td {
+    padding: 11px 14px;
+    border-top: 1px solid #e4e4e7;
+    color: #18181b;
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  table.tbl tr:first-child td { border-top: none; }
+  table.tbl td.right { text-align: right; }
+  table.tbl td.muted { color: #71717a; font-size: 11.5px; }
+
+  /* form controls */
+  .input, .select {
+    width: 100%;
+    background: #ffffff;
+    border: 1px solid #e4e4e7;
+    border-radius: 10px;
+    color: #18181b;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 10px 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .input:focus, .select:focus {
+    outline: none;
+    border-color: #10b981;
+    box-shadow: 0 0 0 2px rgba(16,185,129,0.15);
+  }
+  textarea.input { resize: vertical; min-height: 88px; }
+
+  /* buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 11px 18px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.15s ease, transform 0.06s ease, color 0.15s ease;
+    user-select: none;
+  }
+  .btn-primary { background: #18181b; color: #fafafa; }
+  .btn-primary:hover:not(:disabled) { background: #27272a; }
+  .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-danger {
+    background: #ffffff; color: #b91c1c; border-color: #fecaca;
+  }
+  .btn-danger:hover:not(:disabled) { background: #fee2e2; }
+
+  /* spinner inside primary button while generating */
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #ffffff;
+    border-radius: 9999px;
+    animation: sg-spin 0.8s linear infinite;
+  }
+  @keyframes sg-spin { to { transform: rotate(360deg); } }
+
+  /* dotted divider for the workers section header */
+  .divider-dotted {
+    border-top: 1px dashed #e4e4e7;
+  }
+
+  /* fade-in for new content */
+  .fade-in { animation: sg-fade 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+  @keyframes sg-fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+
+  /* selection */
+  ::selection { background: rgba(16,185,129,0.18); }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-[1280px] mx-auto px-6 py-10 lg:py-14">
+
+  <!-- Hero -->
+  <header class="mb-10 lg:mb-12">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-ink text-white text-[11px] font-semibold tracking-tight">SG</span>
+      <span class="eyebrow">distributed sd-turbo</span>
+    </div>
+    <h1 class="text-[34px] lg:text-[40px] leading-[1.05] tracking-[-0.025em] font-semibold text-ink">
+      SwarmGen
+    </h1>
+    <p class="mt-3 text-[14.5px] text-steel max-w-[68ch] leading-relaxed">
+      Stable Diffusion Turbo, partitioned across three heterogeneous edge devices.
+      CLIP runs on a CPU laptop, UNet on an RTX 5060, VAE on a Raspberry Pi 4B.
+      Heartbeat-driven fault tolerance reroutes the VAE stage to the GPU when the
+      Pi dies mid-flight.
+    </p>
+  </header>
+
+  <!-- Asymmetric upper row: controls 5/12, output 7/12 -->
+  <main class="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+
+    <!-- Controls -->
+    <section class="lg:col-span-5 space-y-7">
+
+      <div>
+        <div class="eyebrow mb-2.5">prompt</div>
+        <textarea id="prompt" class="input" rows="3"
+          placeholder="describe the image...">a watercolor painting of a lighthouse at dusk</textarea>
+      </div>
+
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <div class="eyebrow mb-2.5">seed</div>
+          <input id="seed" type="number" class="input mono" value="42" min="0" max="2147483647" />
+        </div>
+        <div>
+          <div class="eyebrow mb-2.5">steps</div>
+          <input id="steps" type="number" class="input mono" value="4" min="1" max="8" />
+        </div>
+        <div>
+          <div class="eyebrow mb-2.5">fault inject</div>
+          <select id="fault" class="select">
+            <option value="none">none</option>
+            <option value="vae">vae (kill at t=1s)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button id="generate" class="btn btn-primary press flex-1">
+          <span id="generate-label">generate</span>
+        </button>
+        <button id="kill-vae" class="btn btn-danger press">
+          kill Pi VAE worker
+        </button>
+      </div>
+
+      <div id="summary" class="text-[13.5px] text-ink min-h-[22px]"></div>
+
+      <div>
+        <div class="eyebrow mb-2.5">per-stage timing</div>
+        <div class="card overflow-hidden">
+          <table class="tbl">
+            <thead><tr>
+              <th>stage</th>
+              <th class="text-right">ms</th>
+              <th class="text-right">bytes</th>
+              <th>via</th>
+              <th class="text-right">retries</th>
+            </tr></thead>
+            <tbody id="stages-tbody">
+              <!-- populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Output -->
+    <section class="lg:col-span-7">
+      <div class="eyebrow mb-2.5">output</div>
+      <div id="image-frame" class="image-frame">
+        <div class="empty-state">no image yet — press generate</div>
+      </div>
+      <div id="image-meta" class="mt-2.5 text-[12px] text-whisper mono"></div>
+    </section>
+  </main>
+
+  <!-- Workers -->
+  <section class="mt-12">
+    <div class="flex items-end justify-between mb-3">
+      <div>
+        <div class="eyebrow">workers</div>
+        <h2 class="text-[18px] font-semibold tracking-tight text-ink mt-0.5">live health</h2>
+      </div>
+      <div class="text-[12px] text-whisper mono">
+        polled every <span class="chip">2 s</span>
+      </div>
+    </div>
+    <div class="card overflow-hidden">
+      <table class="tbl">
+        <thead><tr>
+          <th>role</th>
+          <th>device</th>
+          <th>host</th>
+          <th>status</th>
+          <th class="text-right">RSS&nbsp;MB</th>
+          <th class="text-right">peak&nbsp;MB</th>
+          <th>supports</th>
+        </tr></thead>
+        <tbody id="workers-tbody">
+          <!-- populated by JS -->
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="mt-14 pt-6 divider-dotted text-[12px] text-whisper flex flex-wrap gap-x-5 gap-y-2 justify-between">
+    <div>SwarmGen · CIS 589 final project · UM-Dearborn</div>
+    <div class="mono">
+      <a href="https://github.com/sudarshan-sridhar/swarmgen" target="_blank" class="hover:text-ink transition">github.com/sudarshan-sridhar/swarmgen</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+const STAGES = ["clip", "unet", "vae"];
+
+function fmtNum(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  return new Intl.NumberFormat("en-US").format(Math.round(n));
+}
+
+function emptyStagesRows() {
+  return STAGES.map(s => `
+    <tr><td>${s.toUpperCase()}</td>
+        <td class="right">—</td>
+        <td class="right">—</td>
+        <td class="muted">—</td>
+        <td class="right">0</td>
+    </tr>`).join("");
+}
+
+function renderStages(timings, sizes, used, retries) {
+  return STAGES.map(s => {
+    const ms = timings && timings[s];
+    const bytes = sizes && sizes[s];
+    let via = (used && used[s]) || "—";
+    if (via.includes("@")) via = via.split("@")[1];
+    const r = (retries && retries[s]) || 0;
+    return `<tr class="fade-in">
+      <td>${s.toUpperCase()}</td>
+      <td class="right">${fmtNum(ms)}</td>
+      <td class="right">${fmtNum(bytes)}</td>
+      <td class="muted">${via}</td>
+      <td class="right">${r}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderWorkers(rows) {
+  if (!rows || rows.length === 0) {
+    return `<tr><td colspan="7" class="muted" style="padding:18px 14px">no workers registered</td></tr>`;
+  }
+  return rows.map(w => {
+    const aliveBadge = w.alive
+      ? `<span class="pill pill-alive">alive</span>`
+      : `<span class="pill pill-dead">dead</span>`;
+    const supports = (w.supports || [w.role]).join(", ");
+    return `<tr>
+      <td><strong style="font-weight:600;letter-spacing:0.04em">${w.role.toUpperCase()}</strong></td>
+      <td>${w.device || "—"}${w.gpu_name ? ` · ${w.gpu_name.replace("NVIDIA GeForce ","")}` : ""}</td>
+      <td class="muted">${w.host}:${w.port}</td>
+      <td>${aliveBadge}</td>
+      <td class="right">${fmtNum(w.current_mb)}</td>
+      <td class="right">${fmtNum(w.peak_mb)}</td>
+      <td class="muted">${supports}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function refreshWorkers() {
+  try {
+    const r = await fetch("/api/workers", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const rows = await r.json();
+    $("workers-tbody").innerHTML = renderWorkers(rows);
+  } catch (e) {
+    $("workers-tbody").innerHTML =
+      `<tr><td colspan="7" class="muted" style="padding:18px 14px">workers fetch failed: ${e.message}</td></tr>`;
+  }
+}
+
+async function generate() {
+  const prompt = $("prompt").value.trim();
+  if (!prompt) {
+    $("summary").innerHTML = `<strong>Failed</strong> &nbsp;<span class="chip">enter a prompt first</span>`;
+    return;
+  }
+  const body = {
+    prompt,
+    seed: parseInt($("seed").value || "42", 10),
+    steps: parseInt($("steps").value || "4", 10),
+    fault: $("fault").value === "none" ? null : $("fault").value,
+  };
+
+  // Lock UI, show shimmer.
+  const btn = $("generate");
+  btn.disabled = true;
+  $("generate-label").innerHTML = `<span class="inline-flex items-center gap-2"><span class="spinner"></span><span>generating...</span></span>`;
+  $("summary").innerHTML = `<span class="chip mono">running</span> &nbsp;<span class="text-steel">CLIP → UNet → VAE</span>`;
+  // shimmer overlay on image frame
+  let shimmerEl = document.querySelector("#image-frame .shimmer");
+  if (!shimmerEl) {
+    shimmerEl = document.createElement("div");
+    shimmerEl.className = "shimmer";
+    $("image-frame").appendChild(shimmerEl);
+  }
+
+  const t0 = performance.now();
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+
+    // Render image
+    const frame = $("image-frame");
+    frame.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = data.image_url + "?t=" + Date.now();
+    img.alt = prompt;
+    img.className = "fade-in";
+    frame.appendChild(img);
+
+    // Stage table
+    $("stages-tbody").innerHTML = renderStages(
+      data.timings_ms, data.bytes_per_stage, data.workers_used, data.retries
+    );
+
+    // Summary line + image meta
+    const total = data.total_ms;
+    const faultNote = data.fault_injected
+      ? `<span class="chip">fault → ${data.fault_injected}</span> &nbsp;`
+      : "";
+    $("summary").innerHTML =
+      `${faultNote}<strong>Total</strong> &nbsp;<span class="chip mono">${fmtNum(total)} ms</span>`;
+    const wallMs = (performance.now() - t0).toFixed(0);
+    $("image-meta").textContent =
+      `${data.image_url}  ·  client wall ${wallMs} ms`;
+  } catch (e) {
+    $("summary").innerHTML = `<strong style="color:#b91c1c">Failed</strong> &nbsp;<span class="chip">${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    $("generate-label").textContent = "generate";
+    refreshWorkers();
+  }
+}
+
+async function killVae() {
+  try {
+    const r = await fetch("/api/admin/kill-vae", { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+    $("summary").innerHTML =
+      `<strong>Sent</strong> &nbsp;<span class="chip mono">POST /admin/die</span> &nbsp;to&nbsp;<span class="chip mono">${data.killed}</span> &nbsp;— generate again to watch fallback`;
+  } catch (e) {
+    $("summary").innerHTML = `<strong style="color:#b91c1c">Kill failed</strong> &nbsp;<span class="chip">${e.message}</span>`;
+  } finally {
+    refreshWorkers();
+  }
+}
+
+// Initialize
+$("stages-tbody").innerHTML = emptyStagesRows();
+$("generate").addEventListener("click", generate);
+$("kill-vae").addEventListener("click", killVae);
+$("prompt").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
+});
+refreshWorkers();
+setInterval(refreshWorkers, 2000);
+</script>
+</body>
+</html>
