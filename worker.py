@@ -47,6 +47,11 @@ from typing import Any, Dict, Optional
 
 import psutil
 import torch
+# Ensure safetensors.torch submodule is registered before diffusers imports it.
+# Some safetensors+diffusers combos don't auto-register the .torch attribute,
+# which leads to "module 'safetensors' has no attribute 'torch'" deep in load_state_dict.
+import safetensors  # noqa: F401
+import safetensors.torch  # noqa: F401
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -141,9 +146,15 @@ def _load_models(role: str) -> ModelBundle:
         from diffusers import EulerDiscreteScheduler, UNet2DConditionModel
 
         log.info("loading UNet from %s", MODEL_ID)
-        bundle.unet = UNet2DConditionModel.from_pretrained(
-            MODEL_ID, subfolder="unet", torch_dtype=dtype
-        ).to(device)
+        try:
+            bundle.unet = UNet2DConditionModel.from_pretrained(
+                MODEL_ID, subfolder="unet", torch_dtype=dtype, variant="fp16"
+            ).to(device)
+        except Exception:
+            log.warning("fp16 variant not available, falling back to default weights")
+            bundle.unet = UNet2DConditionModel.from_pretrained(
+                MODEL_ID, subfolder="unet", torch_dtype=dtype
+            ).to(device)
         bundle.unet.eval()
         bundle.scheduler = EulerDiscreteScheduler.from_pretrained(
             MODEL_ID, subfolder="scheduler"
