@@ -56,7 +56,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from PIL import Image
-from zeroconf import IPVersion, ServiceInfo, Zeroconf
+from zeroconf import IPVersion, ServiceInfo
+from zeroconf.asyncio import AsyncZeroconf
 
 import protocol
 
@@ -307,7 +308,9 @@ def make_app(role: str, port: int) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Register mDNS on startup.
+        # Register mDNS on startup using AsyncZeroconf to play nicely with the
+        # FastAPI/uvicorn event loop. Sync Zeroconf in an async lifespan trips
+        # EventLoopBlocked on newer zeroconf releases.
         local_ip = _detect_local_ip()
         host = socket.gethostname().split(".")[0].lower()
         service_name = f"swarmgen-{role}-{host}._swarmgen._tcp.local."
@@ -324,9 +327,9 @@ def make_app(role: str, port: int) -> FastAPI:
                 },
                 server=f"{host}.local.",
             )
-            zc = Zeroconf(ip_version=IPVersion.V4Only)
-            zc.register_service(info)
-            zc_state["zc"] = zc
+            azc = AsyncZeroconf(ip_version=IPVersion.V4Only)
+            await azc.async_register_service(info)
+            zc_state["zc"] = azc
             zc_state["info"] = info
             log.info("mDNS announced %s @ %s:%d", service_name, local_ip, port)
         except Exception:
@@ -345,8 +348,8 @@ def make_app(role: str, port: int) -> FastAPI:
         # Shutdown.
         if zc_state["zc"] is not None:
             try:
-                zc_state["zc"].unregister_service(zc_state["info"])
-                zc_state["zc"].close()
+                await zc_state["zc"].async_unregister_service(zc_state["info"])
+                await zc_state["zc"].async_close()
                 log.info("mDNS unregistered")
             except Exception:
                 log.exception("mDNS unregister failed")
