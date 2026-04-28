@@ -43,7 +43,7 @@ import time
 import traceback
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import psutil
 import torch
@@ -118,67 +118,78 @@ class ModelBundle:
     capabilities: Dict[str, Any] = field(default_factory=dict)
 
 
-def _pick_device_dtype(role: str) -> tuple[torch.device, torch.dtype]:
-    if role == "unet" and torch.cuda.is_available():
+def _pick_device_dtype(primary_role: str) -> tuple[torch.device, torch.dtype]:
+    """Choose device/dtype based on the *primary* role, used for everything loaded here."""
+    if torch.cuda.is_available():
+        # GPU box: float16 on CUDA for any component we host (faster, smaller).
         return torch.device("cuda"), torch.float16
-    if role == "vae":
-        # CPU FP32 for the Pi. Slow but deterministic, fits in RAM.
-        return torch.device("cpu"), torch.float32
-    # CLIP on CPU laptop. FP32 is fine; CLIP is small.
+    # CPU-only devices (pc, pi): fp32. CLIP and VAE are fine in fp32.
     return torch.device("cpu"), torch.float32
 
 
-def _load_models(role: str) -> ModelBundle:
-    device, dtype = _pick_device_dtype(role)
-    log.info("loading models: role=%s device=%s dtype=%s", role, device, dtype)
-    bundle = ModelBundle(role=role, device=device, dtype=dtype)
+def _load_models(primary_role: str, all_roles: List[str]) -> ModelBundle:
+    """Load the primary role's model plus any fallback roles requested.
 
-    if role == "clip":
-        from transformers import CLIPTextModel, CLIPTokenizer
+    The Pi (CPU, ~1.8GB RAM) should never be asked to load anything but VAE.
+    The GPU box typically loads UNet primary + (CLIP, VAE) fallbacks: each fp16
+    fallback adds well under 1GB VRAM, well within the 8GB budget.
+    """
+    device, dtype = _pick_device_dtype(primary_role)
+    log.info("loading models: primary=%s fallbacks=%s device=%s dtype=%s",
+             primary_role, [r for r in all_roles if r != primary_role], device, dtype)
+    bundle = ModelBundle(role=primary_role, device=device, dtype=dtype)
 
-        log.info("loading CLIP tokenizer + text_encoder from %s", MODEL_ID)
-        bundle.tokenizer = CLIPTokenizer.from_pretrained(MODEL_ID, subfolder="tokenizer")
-        bundle.text_encoder = CLIPTextModel.from_pretrained(
-            MODEL_ID, subfolder="text_encoder", torch_dtype=dtype
-        ).to(device)
-        bundle.text_encoder.eval()
+    for role in all_roles:
+        if role == "clip":
+            from transformers import CLIPTextModel, CLIPTokenizer
 
-    elif role == "unet":
-        from diffusers import EulerDiscreteScheduler, UNet2DConditionModel
-
-        log.info("loading UNet from %s", MODEL_ID)
-        try:
-            bundle.unet = UNet2DConditionModel.from_pretrained(
-                MODEL_ID, subfolder="unet", torch_dtype=dtype, variant="fp16"
+            log.info("loading CLIP tokenizer + text_encoder from %s (%s/%s)",
+                     MODEL_ID, device, dtype)
+            bundle.tokenizer = CLIPTokenizer.from_pretrained(MODEL_ID, subfolder="tokenizer")
+            bundle.text_encoder = CLIPTextModel.from_pretrained(
+                MODEL_ID, subfolder="text_encoder", torch_dtype=dtype
             ).to(device)
-        except Exception:
-            log.warning("fp16 variant not available, falling back to default weights")
-            bundle.unet = UNet2DConditionModel.from_pretrained(
-                MODEL_ID, subfolder="unet", torch_dtype=dtype
+            bundle.text_encoder.eval()
+
+        elif role == "unet":
+            from diffusers import EulerDiscreteScheduler, UNet2DConditionModel
+
+            log.info("loading UNet from %s (%s/%s)", MODEL_ID, device, dtype)
+            try:
+                bundle.unet = UNet2DConditionModel.from_pretrained(
+                    MODEL_ID, subfolder="unet", torch_dtype=dtype, variant="fp16"
+                ).to(device)
+            except Exception:
+                log.warning("fp16 variant not available, falling back to default weights")
+                bundle.unet = UNet2DConditionModel.from_pretrained(
+                    MODEL_ID, subfolder="unet", torch_dtype=dtype
+                ).to(device)
+            bundle.unet.eval()
+            bundle.scheduler = EulerDiscreteScheduler.from_pretrained(
+                MODEL_ID, subfolder="scheduler"
+            )
+
+        elif role == "vae":
+            from diffusers import AutoencoderKL
+
+            log.info("loading VAE from %s (%s/%s)", MODEL_ID, device, dtype)
+            bundle.vae = AutoencoderKL.from_pretrained(
+                MODEL_ID, subfolder="vae", torch_dtype=dtype
             ).to(device)
-        bundle.unet.eval()
-        bundle.scheduler = EulerDiscreteScheduler.from_pretrained(
-            MODEL_ID, subfolder="scheduler"
-        )
+            bundle.vae.eval()
 
-    elif role == "vae":
-        from diffusers import AutoencoderKL
-
-        log.info("loading VAE from %s", MODEL_ID)
-        bundle.vae = AutoencoderKL.from_pretrained(
-            MODEL_ID, subfolder="vae", torch_dtype=dtype
-        ).to(device)
-        bundle.vae.eval()
-
-    else:
-        raise ValueError(f"unknown role: {role}")
+        else:
+            raise ValueError(f"unknown role: {role}")
 
     return bundle
 
 
-def _build_capabilities(role: str, port: int, bundle: ModelBundle) -> Dict[str, Any]:
+def _build_capabilities(
+    primary_role: str, port: int, all_roles: List[str], bundle: ModelBundle
+) -> Dict[str, Any]:
+    fallbacks = [r for r in all_roles if r != primary_role]
     caps: Dict[str, Any] = {
-        "role": role,
+        "role": primary_role,
         "hostname": socket.gethostname(),
         "port": port,
         "platform": sys.platform,
@@ -190,15 +201,14 @@ def _build_capabilities(role: str, port: int, bundle: ModelBundle) -> Dict[str, 
         "device": str(bundle.device),
         "dtype": str(bundle.dtype).removeprefix("torch."),
         "model_id": MODEL_ID,
-        "supported_stages": [role],
-        "fallback_for": [],  # filled below for the GPU box
+        "supported_stages": all_roles,
+        "fallback_for": fallbacks,
     }
     if torch.cuda.is_available():
         try:
             props = torch.cuda.get_device_properties(0)
             caps["gpu_name"] = torch.cuda.get_device_name(0)
             caps["gpu_vram_mb"] = round(props.total_memory / (1024 * 1024), 1)
-            caps["fallback_for"] = ["clip", "vae"]  # GPU box can stand in if a worker dies
         except Exception:
             log.exception("failed to inspect GPU")
     return caps
@@ -296,12 +306,14 @@ def _detect_local_ip() -> str:
 # -----------------------------------------------------------------------------
 # FastAPI app
 # -----------------------------------------------------------------------------
-def make_app(role: str, port: int) -> FastAPI:
-    bundle: ModelBundle = _load_models(role)
+def make_app(role: str, port: int, fallback_roles: Optional[List[str]] = None) -> FastAPI:
+    fallback_roles = list(fallback_roles or [])
+    all_roles = [role] + [r for r in fallback_roles if r != role]
+    bundle: ModelBundle = _load_models(role, all_roles)
     MEM.sample()
     log.info("models loaded. RSS=%.1f MB", MEM.current_mb)
 
-    capabilities = _build_capabilities(role, port, bundle)
+    capabilities = _build_capabilities(role, port, all_roles, bundle)
     log.info("capabilities=%s", json.dumps(capabilities))
 
     zc_state: Dict[str, Any] = {"zc": None, "info": None}
@@ -400,18 +412,26 @@ def make_app(role: str, port: int) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"bad params header: {e}")
 
         body = await request.body()
-        log.info("run_stage role=%s params=%s body=%dB",
-                 role, json.dumps(params)[:120], len(body))
+        # The coordinator may ask this worker to run any stage in supported_stages
+        # (its primary role plus any fallbacks). Default to the primary role.
+        stage = (params.get("stage") or role).lower()
+        if stage not in all_roles:
+            raise HTTPException(
+                status_code=400,
+                detail=f"this worker does not serve stage={stage!r} (supported={all_roles})",
+            )
+        log.info("run_stage primary=%s stage=%s params=%s body=%dB",
+                 role, stage, json.dumps(params)[:120], len(body))
 
         t0 = time.perf_counter()
         try:
-            if role == "clip":
+            if stage == "clip":
                 prompt = params.get("prompt")
                 out_t = run_clip(bundle, prompt=prompt)
                 payload = protocol.pack_tensor(out_t)
                 content_type = "application/octet-stream"
 
-            elif role == "unet":
+            elif stage == "unet":
                 if not body:
                     raise HTTPException(status_code=400, detail="unet stage requires packed encoder_hidden_states in body")
                 enc = protocol.unpack_tensor(body)
@@ -426,7 +446,7 @@ def make_app(role: str, port: int) -> FastAPI:
                 payload = protocol.pack_tensor(out_t)
                 content_type = "application/octet-stream"
 
-            elif role == "vae":
+            elif stage == "vae":
                 if not body:
                     raise HTTPException(status_code=400, detail="vae stage requires packed latents in body")
                 latents = protocol.unpack_tensor(body)
@@ -434,7 +454,7 @@ def make_app(role: str, port: int) -> FastAPI:
                 content_type = "image/png"
 
             else:
-                raise HTTPException(status_code=500, detail=f"unsupported role: {role}")
+                raise HTTPException(status_code=500, detail=f"unsupported stage: {stage}")
 
         except HTTPException:
             raise
@@ -444,14 +464,15 @@ def make_app(role: str, port: int) -> FastAPI:
 
         ms = (time.perf_counter() - t0) * 1000
         MEM.sample()
-        log.info("run_stage done role=%s in %.1f ms (out=%dB) RSS=%.1f peak=%.1f",
-                 role, ms, len(payload), MEM.current_mb, MEM.peak_mb)
+        log.info("run_stage done stage=%s in %.1f ms (out=%dB) RSS=%.1f peak=%.1f",
+                 stage, ms, len(payload), MEM.current_mb, MEM.peak_mb)
         return Response(
             content=payload,
             media_type=content_type,
             headers={
                 "X-SwarmGen-Stage-Ms": f"{ms:.2f}",
                 "X-SwarmGen-Role": role,
+                "X-SwarmGen-Stage": stage,
                 "X-SwarmGen-Peak-MB": f"{MEM.peak_mb:.1f}",
             },
         )
@@ -476,6 +497,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--role", required=True, choices=["clip", "unet", "vae"])
     p.add_argument("--port", type=int, required=True)
     p.add_argument("--host", default="0.0.0.0", help="bind address (default 0.0.0.0)")
+    p.add_argument("--fallback-roles", default="",
+                   help="comma-separated extra roles to load (e.g. 'clip,vae'). "
+                        "Lets this worker stand in if another node dies. "
+                        "Only safe on devices with the RAM/VRAM to host extras.")
     p.add_argument("--verbose", action="store_true", help="DEBUG logging")
     return p.parse_args()
 
@@ -483,10 +508,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     _setup_logging(args.verbose)
-    log.info("starting SwarmGen worker role=%s port=%d host=%s pid=%d",
-             args.role, args.port, args.host, os.getpid())
+    fallback_roles = [r.strip() for r in (args.fallback_roles or "").split(",") if r.strip()]
+    log.info("starting SwarmGen worker role=%s port=%d host=%s pid=%d fallback=%s",
+             args.role, args.port, args.host, os.getpid(), fallback_roles)
 
-    app = make_app(args.role, args.port)
+    app = make_app(args.role, args.port, fallback_roles=fallback_roles)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
