@@ -1,3 +1,6 @@
+# Claude Code local
+.claude/
+
 # Python
 __pycache__/
 *.pyc
