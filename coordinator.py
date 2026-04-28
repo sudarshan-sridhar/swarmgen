@@ -397,11 +397,185 @@ def _slugify(s: str, maxlen: int = 60) -> str:
 
 
 # -----------------------------------------------------------------------------
+# Batch with pipeline parallelism
+# -----------------------------------------------------------------------------
+@dataclass
+class BatchItemResult:
+    idx: int
+    prompt: str
+    image_path: Optional[Path]
+    timings_ms: Dict[str, float]
+    bytes_per_stage: Dict[str, int]
+    workers_used: Dict[str, str]
+    retries: Dict[str, List[str]]
+    error: Optional[str] = None
+
+
+@dataclass
+class BatchResult:
+    items: List[BatchItemResult]
+    total_ms: float
+    throughput_imgs_per_min: float
+
+
+def read_prompts_file(path: Path) -> List[str]:
+    lines = [ln.strip() for ln in Path(path).read_text(encoding="utf-8").splitlines()]
+    return [ln for ln in lines if ln and not ln.startswith("#")]
+
+
+async def generate_batch(
+    registry: List[Worker],
+    prompts: List[str],
+    *,
+    out_dir: Path,
+    steps: int = 4,
+    seed_base: int = 42,
+    height: int = 512,
+    width: int = 512,
+    queue_max: int = 4,
+) -> BatchResult:
+    """Pipeline-parallel batch generation.
+
+    Three async tasks (clip / unet / vae) operate concurrently. As soon as CLIP
+    finishes prompt N it moves to N+1; UNet picks up N's encoding while CLIP
+    encodes N+1; VAE decodes N's latent while UNet denoises N+1. Steady-state
+    throughput is bounded by max(stage latency).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    SENTINEL = object()
+
+    q_clip_in: asyncio.Queue = asyncio.Queue()  # (idx, prompt)
+    q_unet_in: asyncio.Queue = asyncio.Queue(maxsize=queue_max)
+    q_vae_in: asyncio.Queue = asyncio.Queue(maxsize=queue_max)
+
+    results: Dict[int, BatchItemResult] = {}
+    for i, p in enumerate(prompts):
+        results[i] = BatchItemResult(
+            idx=i, prompt=p, image_path=None,
+            timings_ms={}, bytes_per_stage={}, workers_used={}, retries={},
+        )
+
+    timeout = httpx.Timeout(connect=5.0, read=300.0, write=60.0, pool=5.0)
+    t_start = time.perf_counter()
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+
+        async def clip_task() -> None:
+            while True:
+                item = await q_clip_in.get()
+                if item is SENTINEL:
+                    await q_unet_in.put(SENTINEL)
+                    return
+                idx, prompt = item
+                try:
+                    enc, ms, w, r = await call_stage(
+                        client, registry, "clip", b"", {"prompt": prompt},
+                        read_timeout=60.0,
+                    )
+                    results[idx].timings_ms["clip"] = ms
+                    results[idx].bytes_per_stage["clip"] = len(enc)
+                    results[idx].workers_used["clip"] = f"{w.role}@{w.host}:{w.port}"
+                    results[idx].retries["clip"] = r
+                    await q_unet_in.put((idx, prompt, enc))
+                except Exception as e:
+                    log.exception("clip[%d] failed: %s", idx, prompt)
+                    results[idx].error = f"clip: {type(e).__name__}: {e}"
+                    # Skip the rest of the pipeline for this item.
+                finally:
+                    q_clip_in.task_done()
+
+        async def unet_task() -> None:
+            while True:
+                item = await q_unet_in.get()
+                if item is SENTINEL:
+                    await q_vae_in.put(SENTINEL)
+                    return
+                idx, prompt, enc = item
+                try:
+                    latent, ms, w, r = await call_stage(
+                        client, registry, "unet", enc,
+                        {"steps": steps, "seed": seed_base + idx,
+                         "height": height, "width": width},
+                        read_timeout=180.0,
+                    )
+                    results[idx].timings_ms["unet"] = ms
+                    results[idx].bytes_per_stage["unet"] = len(latent)
+                    results[idx].workers_used["unet"] = f"{w.role}@{w.host}:{w.port}"
+                    results[idx].retries["unet"] = r
+                    await q_vae_in.put((idx, prompt, latent))
+                except Exception as e:
+                    log.exception("unet[%d] failed: %s", idx, prompt)
+                    results[idx].error = f"unet: {type(e).__name__}: {e}"
+
+        async def vae_task() -> None:
+            while True:
+                item = await q_vae_in.get()
+                if item is SENTINEL:
+                    return
+                idx, prompt, latent = item
+                try:
+                    png, ms, w, r = await call_stage(
+                        client, registry, "vae", latent, {},
+                        expect="png", read_timeout=300.0,
+                    )
+                    results[idx].timings_ms["vae"] = ms
+                    results[idx].bytes_per_stage["vae"] = len(png)
+                    results[idx].workers_used["vae"] = f"{w.role}@{w.host}:{w.port}"
+                    results[idx].retries["vae"] = r
+                    slug = f"batch-{idx:02d}-{_slugify(prompt) or 'p'}"
+                    p = out_dir / f"{slug}.png"
+                    p.write_bytes(png)
+                    results[idx].image_path = p
+                    log.info("[%d/%d] saved %s", idx + 1, len(prompts), p.name)
+                except Exception as e:
+                    log.exception("vae[%d] failed: %s", idx, prompt)
+                    results[idx].error = f"vae: {type(e).__name__}: {e}"
+
+        # Feed input.
+        for i, p in enumerate(prompts):
+            await q_clip_in.put((i, p))
+        await q_clip_in.put(SENTINEL)
+
+        await asyncio.gather(clip_task(), unet_task(), vae_task())
+
+    total_ms = (time.perf_counter() - t_start) * 1000
+    completed = [r for r in results.values() if r.image_path is not None]
+    throughput = (len(completed) / (total_ms / 1000.0)) * 60.0 if total_ms > 0 else 0.0
+
+    # Aggregate sidecar.
+    summary_path = out_dir / "batch_summary.json"
+    summary_path.write_text(json.dumps({
+        "n_prompts": len(prompts),
+        "n_completed": len(completed),
+        "total_ms": total_ms,
+        "throughput_imgs_per_min": throughput,
+        "items": [
+            {
+                "idx": r.idx, "prompt": r.prompt,
+                "image": str(r.image_path) if r.image_path else None,
+                "timings_ms": r.timings_ms,
+                "bytes_per_stage": r.bytes_per_stage,
+                "workers_used": r.workers_used,
+                "retries": r.retries,
+                "error": r.error,
+            } for r in results.values()
+        ],
+    }, indent=2))
+    log.info("batch done: %d/%d in %.0f ms (%.2f img/min)",
+             len(completed), len(prompts), total_ms, throughput)
+
+    return BatchResult(items=list(results.values()), total_ms=total_ms,
+                       throughput_imgs_per_min=throughput)
+
+
+# -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="SwarmGen coordinator (single-image, fault-aware).")
-    p.add_argument("--prompt", required=True)
+    p = argparse.ArgumentParser(description="SwarmGen coordinator (single-image / batch / fault-aware).")
+    p.add_argument("--prompt", default=None)
+    p.add_argument("--batch", type=Path, default=None,
+                   help="path to a text file with one prompt per line (uses pipeline parallelism)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--steps", type=int, default=4)
     p.add_argument("--height", type=int, default=512)
@@ -416,8 +590,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fault-delay", type=float, default=1.0)
     p.add_argument("--no-heartbeat", action="store_true",
                    help="disable the background heartbeat monitor")
+    p.add_argument("--queue-max", type=int, default=4, help="batch: bounded inter-stage queue depth")
     p.add_argument("--verbose", action="store_true")
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.prompt and not args.batch:
+        p.error("either --prompt or --batch is required")
+    return args
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -462,6 +640,37 @@ async def main_async(args: argparse.Namespace) -> int:
         monitor.start()
 
     try:
+        if args.batch:
+            prompts = read_prompts_file(args.batch)
+            if not prompts:
+                log.error("no prompts in %s", args.batch)
+                return 2
+            log.info("batch mode: %d prompts from %s", len(prompts), args.batch)
+            br = await generate_batch(
+                workers, prompts,
+                out_dir=args.out_dir,
+                steps=args.steps, seed_base=args.seed,
+                height=args.height, width=args.width,
+                queue_max=args.queue_max,
+            )
+            print()
+            print("=" * 72)
+            print(f"batch:        {len(prompts)} prompts")
+            done = sum(1 for r in br.items if r.image_path is not None)
+            print(f"completed:    {done}/{len(prompts)}")
+            print(f"total:        {br.total_ms:.0f} ms")
+            print(f"throughput:   {br.throughput_imgs_per_min:.2f} img/min")
+            print("-" * 72)
+            for r in br.items:
+                if r.error:
+                    print(f"  [{r.idx:>2}] FAIL  {r.prompt[:50]:<50}  {r.error}")
+                    continue
+                t_total = sum(r.timings_ms.values())
+                stages = " ".join(f"{k}={v:>6.0f}ms" for k, v in r.timings_ms.items())
+                print(f"  [{r.idx:>2}] OK    {r.prompt[:50]:<50}  total={t_total:>7.0f}ms  {stages}")
+            print("=" * 72)
+            return 0
+
         res = await generate(
             workers, args.prompt,
             out_dir=args.out_dir,

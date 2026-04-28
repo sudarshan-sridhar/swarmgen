@@ -1,0 +1,9 @@
+# SwarmGen eval prompts. Lines starting with # are ignored. Pick 8 representative.
+a photo of a red fox in a snowy forest
+a watercolor painting of a lighthouse at dusk
+a steampunk airship over Venice canals
+a cyberpunk city skyline at night, neon reflections
+an oil painting of a cottage in a wheat field
+a corgi astronaut floating in zero gravity
+a bowl of ramen on a wooden table, top down
+a black-and-white film noir detective in the rain
