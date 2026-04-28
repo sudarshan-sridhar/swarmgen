@@ -36,3 +36,5 @@ paper/*.blg
 paper/*.synctex.gz
 paper/*.fdb_latexmk
 paper/*.fls
+node_modules/
+package-lock.json
