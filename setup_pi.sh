@@ -26,12 +26,13 @@ echo "== Installing torch (CPU, aarch64) =="
 # skew across devices is harmless.
 pip install "torch>=2.6,<2.10"
 
-echo "== Installing CPU requirements =="
-pip install -r requirements-cpu.txt
+echo "== Installing Pi requirements (no transformers — VAE-only) =="
+pip install -r requirements-pi.txt
 
 echo "== Sanity: torch + diffusers import =="
 python - <<'PY'
 import torch, diffusers, fastapi, zeroconf, psutil
+print("python", __import__('sys').version.split()[0])
 print("torch", torch.__version__, "cuda?", torch.cuda.is_available())
 print("diffusers", diffusers.__version__)
 print("fastapi", fastapi.__version__)
