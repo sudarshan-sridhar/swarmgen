@@ -179,14 +179,27 @@ def health_table_sync() -> pd.DataFrame:
     return asyncio.run(_health_table())
 
 
+_EMPTY_STAGES = pd.DataFrame([
+    {"stage": "CLIP", "ms": "—", "bytes": "—", "via": "—", "retries": 0},
+    {"stage": "UNET", "ms": "—", "bytes": "—", "via": "—", "retries": 0},
+    {"stage": "VAE",  "ms": "—", "bytes": "—", "via": "—", "retries": 0},
+])
+
+
 async def _generate(prompt: str, seed: int, steps: int, fault: str):
     fault_stage = fault if fault and fault != "none" else None
-    res = await C.generate(
-        REGISTRY, prompt,
-        out_dir=Path("outputs") / "ui",
-        steps=steps, seed=seed,
-        fault_stage=fault_stage, fault_delay_s=1.0,
-    )
+    try:
+        res = await C.generate(
+            REGISTRY, prompt,
+            out_dir=Path("outputs") / "ui",
+            steps=steps, seed=seed,
+            fault_stage=fault_stage, fault_delay_s=1.0,
+        )
+    except Exception as e:
+        log.exception("generate failed")
+        msg = f"**Failed** `{type(e).__name__}: {e}`"
+        return None, _EMPTY_STAGES.copy(), msg
+
     rows = []
     for st in ("clip", "unet", "vae"):
         ms = res.timings_ms.get(st, float("nan"))
@@ -204,6 +217,8 @@ async def _generate(prompt: str, seed: int, steps: int, fault: str):
 
 
 def generate_sync(prompt: str, seed: int, steps: int, fault: str):
+    if not prompt or not prompt.strip():
+        return None, _EMPTY_STAGES.copy(), "**Failed** `enter a prompt first`"
     return asyncio.run(_generate(prompt, seed, steps, fault))
 
 
