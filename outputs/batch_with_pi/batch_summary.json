@@ -1,0 +1,112 @@
+{
+  "n_prompts": 4,
+  "n_completed": 4,
+  "total_ms": 588056.7547000027,
+  "throughput_imgs_per_min": 0.4081238725375004,
+  "items": [
+    {
+      "idx": 0,
+      "prompt": "a photo of a red fox in a snowy forest",
+      "image": "outputs\\batch_with_pi\\batch-00-a-photo-of-a-red-fox-in-a-snowy-forest.png",
+      "timings_ms": {
+        "clip": 738.6725999967894,
+        "unet": 681.8029999994906,
+        "vae": 137712.5476000001
+      },
+      "bytes_per_stage": {
+        "clip": 315435,
+        "unet": 65579,
+        "vae": 506630
+      },
+      "workers_used": {
+        "clip": "clip@192.168.1.39:8001",
+        "unet": "unet@192.168.1.16:8002",
+        "vae": "vae@192.168.1.185:8003"
+      },
+      "retries": {
+        "clip": [],
+        "unet": [],
+        "vae": []
+      },
+      "error": null
+    },
+    {
+      "idx": 1,
+      "prompt": "a watercolor painting of a lighthouse at dusk",
+      "image": "outputs\\batch_with_pi\\batch-01-a-watercolor-painting-of-a-lighthouse-at-dusk.png",
+      "timings_ms": {
+        "clip": 594.1091000058805,
+        "unet": 236.5060000010999,
+        "vae": 146908.3782000016
+      },
+      "bytes_per_stage": {
+        "clip": 315435,
+        "unet": 65579,
+        "vae": 437640
+      },
+      "workers_used": {
+        "clip": "clip@192.168.1.39:8001",
+        "unet": "unet@192.168.1.16:8002",
+        "vae": "vae@192.168.1.185:8003"
+      },
+      "retries": {
+        "clip": [],
+        "unet": [],
+        "vae": []
+      },
+      "error": null
+    },
+    {
+      "idx": 2,
+      "prompt": "a steampunk airship over Venice canals",
+      "image": "outputs\\batch_with_pi\\batch-02-a-steampunk-airship-over-venice-canals.png",
+      "timings_ms": {
+        "clip": 491.6616000045906,
+        "unet": 225.89850000076694,
+        "vae": 146326.90290000028
+      },
+      "bytes_per_stage": {
+        "clip": 315435,
+        "unet": 65579,
+        "vae": 526487
+      },
+      "workers_used": {
+        "clip": "clip@192.168.1.39:8001",
+        "unet": "unet@192.168.1.16:8002",
+        "vae": "vae@192.168.1.185:8003"
+      },
+      "retries": {
+        "clip": [],
+        "unet": [],
+        "vae": []
+      },
+      "error": null
+    },
+    {
+      "idx": 3,
+      "prompt": "a cyberpunk city skyline at night, neon reflections",
+      "image": "outputs\\batch_with_pi\\batch-03-a-cyberpunk-city-skyline-at-night-neon-reflections.png",
+      "timings_ms": {
+        "clip": 632.5835000025108,
+        "unet": 242.33900000399444,
+        "vae": 155668.07289999997
+      },
+      "bytes_per_stage": {
+        "clip": 315435,
+        "unet": 65579,
+        "vae": 458748
+      },
+      "workers_used": {
+        "clip": "clip@192.168.1.39:8001",
+        "unet": "unet@192.168.1.16:8002",
+        "vae": "vae@192.168.1.185:8003"
+      },
+      "retries": {
+        "clip": [],
+        "unet": [],
+        "vae": []
+      },
+      "error": null
+    }
+  ]
+}
