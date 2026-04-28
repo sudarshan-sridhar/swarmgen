@@ -21,8 +21,10 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 
 echo "== Installing torch (CPU, aarch64) =="
-# Pi 4B is aarch64. Stock PyPI wheel works on Bookworm/Bullseye 64-bit.
-pip install "torch==2.4.1"
+# Pi 4B is aarch64. PyPI ships aarch64 wheels for torch >= 2.6 on modern Python.
+# We don't pin tightly because the protocol uses raw numpy bytes, so torch version
+# skew across devices is harmless.
+pip install "torch>=2.6,<2.10"
 
 echo "== Installing CPU requirements =="
 pip install -r requirements-cpu.txt
