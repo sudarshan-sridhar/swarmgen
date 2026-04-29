@@ -38,7 +38,6 @@ single-image latency over a batch via pipeline parallelism.
 | `api.py`           | FastAPI server backing the web UI. |
 | `static/`          | Tailwind frontend served by `api.py`. |
 | `ui.py`            | Older Gradio demo, kept for reference. |
-| `paper/`           | IEEE-format paper sources and figures. |
 | `requirements-*.txt`, `setup_*.sh` | Per-device dependencies and bootstrap scripts. |
 
 ## Running the swarm
@@ -87,11 +86,11 @@ python api.py --workers clip@<laptop-ip>:8001,unet@<gpu-ip>:8002,vae@<pi-ip>:800
 
 Every script supports `--help`.
 
-## Reproducing the paper results
+## Reproducing the measurements
 
 ```
 python eval.py --suite all          # writes results/*.csv
-python plot_results.py              # writes paper/figs/*.png
+python plot_results.py              # writes figures to outputs/
 ```
 
 ## Conventions
