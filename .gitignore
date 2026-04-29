@@ -19,9 +19,16 @@ Thumbs.db
 .idea/
 
 # SwarmGen runtime artifacts
-outputs/*.png
+outputs/**/*.png
+outputs/**/*.json
+!outputs/**/batch_summary.json
 results/*.csv
 *.log
+prompts*.txt
+!prompts.txt
+
+# Submission bundle (PDFs, videos, zipped report)
+paper/swarmgen_submission/
 
 # Hugging Face cache (if it ever lands in repo)
 .cache/
